@@ -1,68 +1,55 @@
-"""
-NDT Results Visualizer
-======================
-用于查看和分析NDT检测结果的交互式工具
-
-功能:
-- 查看所有中间结果
-- 对比不同方法
-- 生成详细报告
-"""
-
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.patches import Circle
+from matplotlib.patches import Circle, Rectangle
 import os
 import sys
 
-# 确保能找到同目录下的模块
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 class NDTVisualizer:
-    """NDT结果可视化器"""
     
     def __init__(self, data_dir='NDT_Data_V2'):
         self.data_dir = data_dir
         self.load_data()
     
     def load_data(self):
-        """加载所有数据"""
-        print(f"从 {self.data_dir} 加载数据...")
+
+        print(f"loading data from {self.data_dir}...")
         
-        # 原始数据
+        # primitive solution
         data_file = os.path.join(self.data_dir, 'ndt_data_full.npz')
         if os.path.exists(data_file):
             self.data = np.load(data_file)
-            print("  ✓ 原始数据")
+            print("Primitive data find")
         else:
-            print("  ✗ 原始数据不存在")
+            print("no Primitive data")
             self.data = None
         
-        # 基准解
+        # Reference solution
         baseline_file = os.path.join(self.data_dir, 'baseline_solution.npz')
         if os.path.exists(baseline_file):
             self.baseline = np.load(baseline_file)
-            print("  ✓ 基准解")
+            print("Reference solution find")
         else:
-            print("  ✗ 基准解不存在")
+            print("no Reference solution")
             self.baseline = None
         
-        # 检测结果
+        # testing result
         result_file = os.path.join(self.data_dir, 'ndt_result_v2.npz')
         if os.path.exists(result_file):
             self.result = np.load(result_file, allow_pickle=True)
-            print("  ✓ 检测结果")
+            print("testing result output")
         else:
-            print("  ✗ 检测结果不存在")
+            print("no testing result")
             self.result = None
     
     def plot_overview(self):
-        """绘制总览图"""
+
         if self.data is None or self.result is None:
-            print("数据不完整，无法绘制总览")
+            print("no enough data, can't plot")
             return
         
-        print("\n生成总览图...")
+        print("\ngenerate figure...")
         
         x = self.data['x']
         y = self.data['y']
@@ -71,7 +58,7 @@ class NDTVisualizer:
         fig = plt.figure(figsize=(16, 12))
         gs = fig.add_gridspec(3, 3, hspace=0.3, wspace=0.3)
         
-        # 第一行：数据和基准
+        # First line: Data and baseline
         ax1 = fig.add_subplot(gs[0, 0])
         im1 = ax1.imshow(self.data['K_true'].T, origin='lower', extent=[0,1,0,1], 
                         cmap='RdYlBu_r', vmin=0.2, vmax=1.0)
@@ -79,7 +66,9 @@ class NDTVisualizer:
         ax1.set_xlabel('x')
         ax1.set_ylabel('y')
         circle = Circle((0.35, 0.35), 0.15, color='black', fill=False, linewidth=2)
+        rect = Rectangle((0.64, 0.56), 0.12, 0.18, color='black', fill=False, linewidth=2)
         ax1.add_patch(circle)
+        ax1.add_patch(rect)
         plt.colorbar(im1, ax=ax1, label='K')
         
         if self.baseline is not None:
@@ -98,14 +87,14 @@ class NDTVisualizer:
             ax3.set_xlabel('x')
             plt.colorbar(im3, ax=ax3)
         
-        # 第二行：检测结果
+        # Second line: Test results
         ax4 = fig.add_subplot(gs[1, 0])
         im4 = ax4.imshow(self.result['anomaly_map'].T, origin='lower', 
                         extent=[0,1,0,1], cmap='hot')
         ax4.set_title('Anomaly Map', fontsize=12, fontweight='bold')
         ax4.set_xlabel('x')
         ax4.set_ylabel('y')
-        ax4.contour(X, Y, ((X-0.35)**2 + (Y-0.35)**2 < 0.15**2), 
+        ax4.contour(X, Y, ((X-0.35)**2 + (Y-0.35)**2 < 0.15**2) | ((X > 0.64) & (X < 0.76) & (Y > 0.56) & (Y < 0.74)),
                    colors='cyan', linewidths=2, levels=[0.5])
         plt.colorbar(im4, ax=ax4)
         
@@ -115,7 +104,9 @@ class NDTVisualizer:
         ax5.set_title('Detected Defect Mask', fontsize=12, fontweight='bold')
         ax5.set_xlabel('x')
         circle = Circle((0.35, 0.35), 0.15, color='red', fill=False, linewidth=2, label='True')
+        rect = Rectangle((0.64, 0.56), 0.12, 0.18, color='red', fill=False, linewidth=2)
         ax5.add_patch(circle)
+        ax5.add_patch(rect)
         ax5.legend()
         
         ax6 = fig.add_subplot(gs[1, 2])
@@ -125,7 +116,7 @@ class NDTVisualizer:
         ax6.set_xlabel('x')
         plt.colorbar(im6, ax=ax6, label='K')
         
-        # 第三行：误差分析
+        # Third line: Error analysis
         error = np.abs(self.data['K_true'] - self.result['K_optimal'])
         
         ax7 = fig.add_subplot(gs[2, 0])
@@ -135,7 +126,7 @@ class NDTVisualizer:
         ax7.set_ylabel('y')
         plt.colorbar(im7, ax=ax7, label='|K_true - K_pred|')
         
-        # 统计直方图
+        # statistical histogram
         ax8 = fig.add_subplot(gs[2, 1])
         ax8.hist(self.data['K_true'].flatten(), bins=30, alpha=0.7, label='True K', color='blue')
         ax8.hist(self.result['K_optimal'].flatten(), bins=30, alpha=0.7, label='Predicted K', color='red')
@@ -145,7 +136,7 @@ class NDTVisualizer:
         ax8.legend()
         ax8.grid(True, alpha=0.3)
         
-        # 性能指标
+        # performance index
         ax9 = fig.add_subplot(gs[2, 2])
         ax9.axis('off')
         
@@ -172,21 +163,21 @@ Error Stats:
         
         plt.savefig(os.path.join(self.data_dir, 'overview_dashboard.png'), 
                    dpi=150, bbox_inches='tight')
-        print(f"总览图已保存: {self.data_dir}/overview_dashboard.png")
+        print(f"Overview Dashboard saved: {self.data_dir}/overview_dashboard.png")
         plt.close()
     
     def plot_temporal_evolution(self):
-        """绘制时间演化"""
+
         if self.data is None:
-            print("数据不存在，无法绘制时间演化")
+            print("no data!")
             return
         
-        print("\n生成时间演化图...")
+        print("\nGenerate time evolution diagram...")
         
         t = self.data['t']
         U = self.data['U_measured']
         
-        # 选择几个关键时刻
+        # Select several crucial moments
         time_indices = [0, len(t)//4, len(t)//2, 3*len(t)//4, -1]
         
         fig, axes = plt.subplots(1, len(time_indices), figsize=(20, 4))
@@ -199,13 +190,13 @@ Error Stats:
             if idx == 0:
                 axes[idx].set_ylabel('y')
             
-            # 激光位置
+            # Laser position
             if 'laser_cx' in self.data:
                 cx = self.data['laser_cx'][t_idx]
                 cy = self.data['laser_cy'][t_idx]
                 axes[idx].plot(cx, cy, 'c*', markersize=15)
             
-            # 缺陷位置
+            # Defect location
             circle = Circle((0.35, 0.35), 0.15, color='cyan', fill=False, 
                           linewidth=2, linestyle='--')
             axes[idx].add_patch(circle)
@@ -215,16 +206,16 @@ Error Stats:
         plt.tight_layout()
         plt.savefig(os.path.join(self.data_dir, 'temporal_evolution.png'), 
                    dpi=150, bbox_inches='tight')
-        print(f"时间演化图已保存: {self.data_dir}/temporal_evolution.png")
+        print(f"The time evolution graph has been saved: {self.data_dir}/temporal_evolution.png")
         plt.close()
     
     def generate_report(self):
-        """生成详细报告"""
+
         if self.data is None or self.result is None:
-            print("数据不完整，无法生成报告")
+            print("no data")
             return
         
-        print("\n生成详细报告...")
+        print("\nGenerate a detailed report...")
         
         x = self.data['x']
         y = self.data['y']
@@ -233,7 +224,7 @@ Error Stats:
         true_defect = ((X-0.35)**2 + (Y-0.35)**2 < 0.15**2)
         detected_defect = self.result['defect_mask']
         
-        # 计算各种指标
+        # Calculate various indicators
         tp = np.sum(detected_defect & true_defect)
         fp = np.sum(detected_defect & ~true_defect)
         fn = np.sum(~detected_defect & true_defect)
@@ -298,14 +289,14 @@ Error Stats:
 3. Localization performance: Precision = {precision:.3f}, Recall = {recall:.3f}
 
 ## Recommendations
-{'- ✅ Detection successful! Results are reliable.' if self.result['iou'] > 0.8 else '- ⚠️ Consider adjusting threshold_percentile for better localization.'}
-{'- ✅ K prediction is accurate!' if self.result['k_error'] < 0.05 else '- ⚠️ Consider running more optimization iterations.'}
+{'- ✓ Detection successful! Results are reliable.' if self.result['iou'] > 0.8 else '- ! Consider adjusting threshold_percentile for better localization.'}
+{'- ✓ K prediction is accurate!' if self.result['k_error'] < 0.05 else '- ! Consider running more optimization iterations.'}
 """
         
         with open(os.path.join(self.data_dir, 'detection_report.md'), 'w') as f:
             f.write(report)
         
-        print(f"报告已保存: {self.data_dir}/detection_report.md")
+        print(f"Report saved: {self.data_dir}/detection_report.md")
         print("\n" + "="*70)
         print(report)
         print("="*70)
@@ -327,7 +318,7 @@ def main():
     
     args = parser.parse_args()
     
-    # 如果没有指定任何选项，默认生成所有
+    # If no options are specified, all will be generated by default
     if not (args.overview or args.temporal or args.report or args.all):
         args.all = True
     
@@ -342,7 +333,7 @@ def main():
     if args.all or args.report:
         visualizer.generate_report()
     
-    print("\n✓ 可视化完成！")
+    print("\n✓ Visualization completed!")
 
 if __name__ == "__main__":
     main()

@@ -1,16 +1,3 @@
-"""
-NDT Defect Localization and Quantification
-==========================================
-两阶段方法:
-1. 阶段1: 通过梯度差异定位缺陷区域
-2. 阶段2: 在缺陷区域局部优化K值
-
-优势:
-- 更鲁棒（基于物理的FEM）
-- 更精确（局部优化问题规模小）
-- 更快速（分阶段处理）
-"""
-
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter, label
@@ -18,111 +5,72 @@ from scipy.optimize import minimize
 import os
 import sys
 
-# 确保能找到同目录下的模块
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from ndt_fem_solver import FEMSolver
 
 class DefectLocalizer:
-    """缺陷定位器"""
     
     def __init__(self, x, y, t, U_measured, threshold_percentile=92):
-        """
-        初始化
-        
-        参数:
-            x, y: 空间网格
-            t: 时间数组
-            U_measured: 测量温度场
-            threshold_percentile: 梯度差异阈值百分位数
-        """
+
         self.x = x
         self.y = y
         self.t = t
-        self.U_measured = U_measured
-        self.threshold_percentile = threshold_percentile
+        self.U_measured = U_measured # measured temperature field
+        self.threshold_percentile = threshold_percentile # grad difference threshold
         
         self.X, self.Y = np.meshgrid(x, y, indexing='ij')
         
-        print(f"DefectLocalizer初始化: {len(x)}x{len(y)} 网格")
+        print(f"DefectLocalizer initialized: {len(x)}x{len(y)} map")
     
     def compute_gradient_anomaly(self, U_baseline):
-        """
-        计算梯度异常
-        
-        参数:
-            U_baseline: k=1基准解
-        
-        返回:
-            grad_anomaly: 梯度异常图
-        """
-        print("\n计算梯度异常...")
+
+        print("\ncomputing grad diff...")
         
         dx = self.x[1] - self.x[0]
         dy = self.y[1] - self.y[0]
         
-        # 时间平均梯度
+        # time average grad
         grad_mag_measured = np.zeros_like(self.X)
         grad_mag_baseline = np.zeros_like(self.X)
         
         for t_idx in range(len(self.t)):
-            # 测量数据梯度
+            # measured gradient
             grad_x_m, grad_y_m = np.gradient(self.U_measured[t_idx], dx, dy)
             grad_mag_measured += np.sqrt(grad_x_m**2 + grad_y_m**2)
             
-            # 基准梯度
+            # standard baseline gradient
             grad_x_b, grad_y_b = np.gradient(U_baseline[t_idx], dx, dy)
             grad_mag_baseline += np.sqrt(grad_x_b**2 + grad_y_b**2)
         
         grad_mag_measured /= len(self.t)
         grad_mag_baseline /= len(self.t)
         
-        # 梯度差异（归一化）
+        # gradient anomaly
         grad_anomaly = np.abs(grad_mag_measured - grad_mag_baseline)
         grad_anomaly = grad_anomaly / (np.max(grad_anomaly) + 1e-10)
         
-        print(f"梯度异常 - 最大值: {np.max(grad_anomaly):.4f}")
+        print(f"MAX grad difference: {np.max(grad_anomaly):.4f}")
         
         return grad_anomaly
     
     def compute_residual_anomaly(self, U_baseline):
-        """
-        计算温度残差异常
-        
-        参数:
-            U_baseline: k=1基准解
-        
-        返回:
-            residual_anomaly: 残差异常图
-        """
-        print("计算残差异常...")
-        
-        # 时间平均绝对残差
+
+        print("computing u diff...")
+
         residual = self.U_measured - U_baseline
         residual_mean = np.mean(np.abs(residual), axis=0)
-        
-        # 归一化
+
         residual_anomaly = residual_mean / (np.max(residual_mean) + 1e-10)
         
-        print(f"残差异常 - 最大值: {np.max(residual_anomaly):.4f}")
+        print(f"MAX u difference: {np.max(residual_anomaly):.4f}")
         
         return residual_anomaly
     
     def locate_defects(self, U_baseline, use_gradient=True, use_residual=True):
-        """
-        定位缺陷
-        
-        参数:
-            U_baseline: k=1基准解
-            use_gradient: 是否使用梯度异常
-            use_residual: 是否使用残差异常
-        
-        返回:
-            defect_mask: 缺陷掩码
-            anomaly_map: 综合异常图
-        """
+
         print("\n" + "="*70)
-        print("阶段1: 缺陷定位")
+        print("Locate defects")
         print("="*70)
         
         anomaly_maps = []
@@ -135,26 +83,26 @@ class DefectLocalizer:
             residual_anomaly = self.compute_residual_anomaly(U_baseline)
             anomaly_maps.append(residual_anomaly)
         
-        # 综合异常图（加权平均）
+        # Composite abnormality map (weighted average)
         if len(anomaly_maps) == 0:
-            raise ValueError("至少需要一种异常检测方法")
+            raise ValueError("At least one anomaly detection method is required.")
         
         anomaly_map = np.mean(anomaly_maps, axis=0)
         
-        # 平滑异常图
+        # gaussian smooth
         anomaly_smooth = gaussian_filter(anomaly_map, sigma=2.0)
         
-        # 阈值分割
+        # Divided into a percentage system, convenient for threshold determination
         threshold = np.percentile(anomaly_smooth, self.threshold_percentile)
         defect_mask = anomaly_smooth > threshold
         
-        # 形态学处理（去除小区域）
+        # moving small position
         labeled, num_features = label(defect_mask)
         
-        print(f"\n检测到 {num_features} 个候选缺陷区域")
+        print(f"\nFinding {num_features} numbers of defect points")
         
-        # 过滤小区域
-        min_size = 20  # 最小缺陷尺寸（网格点数）
+        # If too small, ignore
+        min_size = 10  # smallest size
         filtered_mask = np.zeros_like(defect_mask)
         
         for i in range(1, num_features + 1):
@@ -162,29 +110,20 @@ class DefectLocalizer:
             if np.sum(region) >= min_size:
                 filtered_mask |= region
                 
-                # 计算区域中心
+                # computer center
                 y_indices, x_indices = np.where(region)
                 center_x = self.x[int(np.mean(x_indices))]
                 center_y = self.y[int(np.mean(y_indices))]
-                print(f"  缺陷 {i}: 中心 ({center_x:.3f}, {center_y:.3f}), 大小 {np.sum(region)} 点")
+                print(f"  defect {i}: center ({center_x:.3f}, {center_y:.3f}), size {np.sum(region)} points")
         
-        print(f"\n保留 {np.sum(filtered_mask > 0)} 个有效缺陷区域")
+        print(f"\nsaved {np.sum(filtered_mask > 0)} numbers of defect points")
         
         return filtered_mask, anomaly_smooth
 
 class DefectQuantifier:
-    """缺陷量化器（局部K值优化）"""
     
     def __init__(self, x, y, t, U_measured, defect_mask):
-        """
-        初始化
-        
-        参数:
-            x, y: 空间网格
-            t: 时间数组
-            U_measured: 测量温度场
-            defect_mask: 缺陷区域掩码
-        """
+
         self.x = x
         self.y = y
         self.t = t
@@ -193,54 +132,42 @@ class DefectQuantifier:
         
         self.X, self.Y = np.meshgrid(x, y, indexing='ij')
         
-        # 创建FEM求解器
+        # init FEMSolver
         dt = t[1] - t[0] if len(t) > 1 else 0.001
         self.solver = FEMSolver(x, y, dt=dt)
         
-        print(f"\nDefectQuantifier初始化:")
-        print(f"  缺陷区域: {np.sum(defect_mask)} 个点")
+        print(f"\nDefectQuantifier initialized:")
+        print(f"  defect point num: {np.sum(defect_mask)}")
     
     def optimize_local_k(self, k_init=0.5, bounds=(0.1, 1.0), method='L-BFGS-B'):
-        """
-        局部优化缺陷区域的K值
-        
-        参数:
-            k_init: 缺陷区域K的初始猜测
-            bounds: K的界限
-            method: 优化方法
-        
-        返回:
-            K_optimal: 优化后的K场
-            result: 优化结果
-        """
+
         print("\n" + "="*70)
-        print("阶段2: 缺陷量化（局部K值优化）")
+        print("Defect quantification (Local K-value optimization)")
         print("="*70)
         
-        # 初始K场（非缺陷区域为1）
+        # Init K
         K_field = np.ones_like(self.X)
         K_field[self.defect_mask] = k_init
         
-        # 缺陷区域的平均K（优化变量）
+        # defect area average K value init
         defect_indices = np.where(self.defect_mask)
         n_defect = len(defect_indices[0])
         
-        print(f"\n优化参数:")
-        print(f"  缺陷点数: {n_defect}")
-        print(f"  初始K值: {k_init}")
-        print(f"  K界限: {bounds}")
+        print(f"\nOptimize parameters:")
+        print(f"defect point num: {n_defect}")
+        print(f"Init K value: {k_init}")
+        print(f"K bounds: {bounds}")
         
-        # 定义目标函数
+        # optimize objective
         def objective(k_defect):
-            """目标函数：最小化测量与模拟的差异"""
             K_test = np.ones_like(self.X)
             K_test[self.defect_mask] = k_defect[0]
             
-            # FEM求解
+            # FEM solve
             U_sim = self.solver.solve_transient(K_test, self.t, verbose=False)
             
-            # 计算误差（仅在关键区域）
-            # 重点关注缺陷附近的温度差异
+            # Computational error (only in critical areas)
+            # Focus on the temperature differences near the defect area
             weight = gaussian_filter(self.defect_mask.astype(float), sigma=3.0)
             weight = weight / (np.max(weight) + 1e-10)
             
@@ -252,9 +179,8 @@ class DefectQuantifier:
             error /= len(self.t)
             
             return error
-        
-        # 优化
-        print("\n开始优化...")
+
+        print("\nbegin optimization...")
         result = minimize(
             objective,
             x0=[k_init],
@@ -263,36 +189,28 @@ class DefectQuantifier:
             options={'maxiter': 100, 'disp': True}
         )
         
-        print("\n优化完成！")
-        print(f"  最优K值: {result.x[0]:.4f}")
-        print(f"  最终误差: {result.fun:.6f}")
-        print(f"  迭代次数: {result.nit}")
-        
-        # 构建最优K场
+        print("\nOptimization complete!")
+        print(f"K value: {result.x[0]:.4f}")
+        print(f"error: {result.fun:.6f}")
+        print(f"iters: {result.nit}")
+
+        # construct K
         K_optimal = np.ones_like(self.X)
         K_optimal[self.defect_mask] = result.x[0]
-        
+
+        # smoothing to fit ground truth
+        K_optimal = gaussian_filter(K_optimal, sigma=1.5)
+
         return K_optimal, result
 
 def full_pipeline(data_path, save_dir='NDT_Data_V2', visualize=True):
-    """
-    完整的NDT流程
-    
-    参数:
-        data_path: 数据文件路径
-        save_dir: 保存目录
-        visualize: 是否可视化
-    
-    返回:
-        K_optimal: 优化后的K场
-        defect_mask: 缺陷掩码
-    """
+
     print("\n" + "="*70)
-    print("NDT完整流程")
+    print("NDT full pipeline")
     print("="*70)
     
-    # 加载数据
-    print(f"\n加载数据: {data_path}")
+    # load data
+    print(f"\nloading data: {data_path}")
     data = np.load(data_path)
     
     x = data['x']
@@ -301,55 +219,55 @@ def full_pipeline(data_path, save_dir='NDT_Data_V2', visualize=True):
     U_measured = data['U_measured']
     K_true = data['K_true']
     
-    print(f"数据形状: U={U_measured.shape}, K={K_true.shape}")
+    print(f"data shape: U={U_measured.shape}, K={K_true.shape}")
     
-    # 步骤0: 求解k=1基准
-    print("\n步骤0: 求解K=1基准...")
+    # FEM solve
+    print("\nFirst, solve baseline")
     dt = t[1] - t[0]
     solver = FEMSolver(x, y, dt=dt)
     K_baseline = np.ones_like(solver.X)
     U_baseline = solver.solve_transient(K_baseline, t, verbose=True)
-    
-    # 步骤1: 缺陷定位
-    localizer = DefectLocalizer(x, y, t, U_measured, threshold_percentile=92)
+
+    # defect localization
+    localizer = DefectLocalizer(x, y, t, U_measured, threshold_percentile=92) # maybe 90 will be better?
     defect_mask, anomaly_map = localizer.locate_defects(U_baseline)
     
-    # 步骤2: 缺陷量化
+    # defect quantification
     quantifier = DefectQuantifier(x, y, t, U_measured, defect_mask)
     K_optimal, opt_result = quantifier.optimize_local_k(k_init=0.25, bounds=(0.15, 0.8))
     
-    # 验证
+    # verification
     print("\n" + "="*70)
-    print("结果验证")
+    print("verification")
     print("="*70)
     
     X, Y = np.meshgrid(x, y, indexing='ij')
     
-    # 真实缺陷区域
-    true_defect = ((X - 0.35)**2 + (Y - 0.35)**2) < 0.15**2
-    
-    # IoU（交并比）
+    # true defect area
+    true_defect = (((X - 0.35)**2 + (Y - 0.35)**2) < 0.15**2) | ((X > 0.64) & (X < 0.76) & (Y > 0.56) & (Y < 0.74))
+
+    # IoU
     intersection = np.sum(defect_mask & true_defect)
     union = np.sum(defect_mask | true_defect)
     iou = intersection / union if union > 0 else 0
     
-    print(f"\n定位精度:")
-    print(f"  IoU (交并比): {iou:.3f}")
-    print(f"  检测到的缺陷点: {np.sum(defect_mask)}")
-    print(f"  真实缺陷点: {np.sum(true_defect)}")
+    print(f"\nlocalization:")
+    print(f"IoU: {iou:.3f}")
+    print(f"defect point found: {np.sum(defect_mask)}")
+    print(f"true defect point num: {np.sum(true_defect)}")
     
-    # K值精度
+    # K error
     k_true_defect = K_true[true_defect].mean()
     k_pred_defect = K_optimal[defect_mask].mean()
     k_error = np.abs(k_true_defect - k_pred_defect)
     
-    print(f"\nK值精度:")
-    print(f"  真实K (缺陷): {k_true_defect:.4f}")
-    print(f"  预测K (缺陷): {k_pred_defect:.4f}")
-    print(f"  绝对误差: {k_error:.4f}")
-    print(f"  相对误差: {k_error/k_true_defect*100:.2f}%")
+    print(f"\nK:")
+    print(f"true K: {k_true_defect:.4f}")
+    print(f"measured K: {k_pred_defect:.4f}")
+    print(f"absolute error: {k_error:.4f}")
+    print(f"relative error: {k_error/k_true_defect*100:.2f}%")
     
-    # 保存结果
+    # saving result
     np.savez(
         os.path.join(save_dir, 'ndt_result_v2.npz'),
         K_optimal=K_optimal,
@@ -359,9 +277,9 @@ def full_pipeline(data_path, save_dir='NDT_Data_V2', visualize=True):
         iou=iou,
         k_error=k_error
     )
-    print(f"\n结果已保存: {save_dir}/ndt_result_v2.npz")
+    print(f"\nresult saved: {save_dir}/ndt_result_v2.npz")
     
-    # 可视化
+    # visualize
     if visualize:
         visualize_results(x, y, K_true, K_optimal, defect_mask, true_defect, 
                          anomaly_map, save_dir)
@@ -370,26 +288,36 @@ def full_pipeline(data_path, save_dir='NDT_Data_V2', visualize=True):
 
 def visualize_results(x, y, K_true, K_pred, defect_mask, true_defect, 
                      anomaly_map, save_dir):
-    """可视化结果"""
-    print("\n生成可视化...")
+    print("\nGenerate visualization...")
     
     X, Y = np.meshgrid(x, y, indexing='ij')
     
     fig, axes = plt.subplots(2, 3, figsize=(15, 10))
     
-    # 第一行：K场对比
+    # first row: K comparison
     im0 = axes[0, 0].imshow(K_true.T, origin='lower', extent=[0,1,0,1], 
                            cmap='RdYlBu_r', vmin=0.2, vmax=1.0)
     axes[0, 0].set_title('True K')
     axes[0, 0].set_xlabel('x')
     axes[0, 0].set_ylabel('y')
     plt.colorbar(im0, ax=axes[0, 0], label='K')
+
+    from matplotlib.patches import Circle, Rectangle
+    circle = Circle((0.35, 0.35), 0.15, color='black', fill=False, linewidth=2, linestyle='--')
+    axes[0, 0].add_patch(circle)
+    rect = Rectangle((0.64, 0.56), 0.12, 0.18, color='black', fill=False, linewidth=2, linestyle='--')
+    axes[0, 0].add_patch(rect)
     
     im1 = axes[0, 1].imshow(K_pred.T, origin='lower', extent=[0,1,0,1], 
                            cmap='RdYlBu_r', vmin=0.2, vmax=1.0)
     axes[0, 1].set_title('Predicted K')
     axes[0, 1].set_xlabel('x')
     plt.colorbar(im1, ax=axes[0, 1], label='K')
+
+    circle2 = Circle((0.35, 0.35), 0.15, color='cyan', fill=False, linewidth=2, linestyle='--')
+    axes[0, 1].add_patch(circle2)
+    rect2 = Rectangle((0.64, 0.56), 0.12, 0.18, color='cyan', fill=False, linewidth=2, linestyle='--')
+    axes[0, 1].add_patch(rect2)
     
     error = np.abs(K_true - K_pred)
     im2 = axes[0, 2].imshow(error.T, origin='lower', extent=[0,1,0,1], 
@@ -398,7 +326,7 @@ def visualize_results(x, y, K_true, K_pred, defect_mask, true_defect,
     axes[0, 2].set_xlabel('x')
     plt.colorbar(im2, ax=axes[0, 2], label='|K_true - K_pred|')
     
-    # 第二行：缺陷定位
+    # second row: defect localization
     axes[1, 0].imshow(anomaly_map.T, origin='lower', extent=[0,1,0,1], 
                      cmap='hot')
     axes[1, 0].set_title('Anomaly Map')
@@ -412,7 +340,7 @@ def visualize_results(x, y, K_true, K_pred, defect_mask, true_defect,
     axes[1, 1].set_xlabel('x')
     axes[1, 1].contour(X, Y, true_defect, colors='red', linewidths=2, levels=[0.5])
     
-    # 定位精度
+    # localization quality
     tp = defect_mask & true_defect
     fp = defect_mask & ~true_defect
     fn = ~defect_mask & true_defect
@@ -427,7 +355,7 @@ def visualize_results(x, y, K_true, K_pred, defect_mask, true_defect,
     axes[1, 2].set_title('Localization Quality')
     axes[1, 2].set_xlabel('x')
     
-    # 图例
+    # figure legend
     from matplotlib.patches import Patch
     legend_elements = [
         Patch(facecolor='green', label='True Positive'),
@@ -440,7 +368,7 @@ def visualize_results(x, y, K_true, K_pred, defect_mask, true_defect,
     plt.savefig(os.path.join(save_dir, 'ndt_results_v2.png'), dpi=150)
     plt.close()
     
-    print(f"可视化已保存: {save_dir}/ndt_results_v2.png")
+    print(f"visualization saved: {save_dir}/ndt_results_v2.png")
 
 if __name__ == "__main__":
     data_path = 'NDT_Data_V2/ndt_data_full.npz'
@@ -448,5 +376,5 @@ if __name__ == "__main__":
     if os.path.exists(data_path):
         K_optimal, defect_mask = full_pipeline(data_path)
     else:
-        print(f"错误: 数据文件不存在: {data_path}")
-        print("请先运行: python ndt_data_v2.py")
+        print(f"Error: no data found: {data_path}")
+        print("please first run: python ndt_data_v2.py")
